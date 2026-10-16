@@ -7,6 +7,7 @@ from azure.cli.core.commands import CliCommandType
 
 from ._format import (
     registry_output_format,
+    reservation_output_format,
     usage_output_format,
     credential_output_format,
     webhook_output_format,
@@ -65,6 +66,11 @@ def load_command_table(self, _):
 
     acr_login_util = CliCommandType(
         operations_tmpl='azure.cli.command_modules.acr.custom#{}'
+    )
+
+    acr_reservation_util = CliCommandType(
+        operations_tmpl='azure.cli.command_modules.acr.reservation#{}',
+        table_transformer=reservation_output_format
     )
 
     acr_import_util = CliCommandType(
@@ -207,6 +213,17 @@ def load_command_table(self, _):
 
     with self.command_group('acr', acr_login_util) as g:
         g.command('login', 'acr_login')
+
+    with self.command_group('acr reservation', acr_reservation_util, is_preview=True) as g:
+        g.command('create', 'acr_reservation_create', supports_no_wait=True)
+        g.show_command('show', 'acr_reservation_show')
+        g.command('list', 'acr_reservation_list')
+        g.command('update', 'acr_reservation_update', supports_no_wait=True)
+        g.command('delete', 'acr_reservation_delete', confirmation=True, supports_no_wait=True)
+        g.command('associate', 'acr_reservation_associate', supports_no_wait=True, table_transformer=None)
+        g.command('disassociate', 'acr_reservation_disassociate', supports_no_wait=True, table_transformer=None)
+        g.command('list-registries', 'acr_reservation_list_registries', table_transformer=None)
+        g.wait_command('wait', 'acr_reservation_wait_get')
 
     with self.command_group('acr', acr_import_util) as g:
         g.command('import', 'acr_import', supports_no_wait=True)

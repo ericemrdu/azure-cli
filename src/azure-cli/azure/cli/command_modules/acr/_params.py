@@ -285,11 +285,29 @@ def load_arguments(self, _):  # pylint: disable=too-many-statements
         c.argument('image', options_list=['--image', '-t'], help="The name of the image. May include a tag in the format 'name:tag'.")
 
     with self.argument_context('acr create') as c:
+        c.argument('reservation', is_preview=True, help='Name of a capacity reservation in the same subscription, resource group and region. Create the registry, then associate it and wait. The registry is preserved if association fails.')
+        c.argument('reservation_timeout', type=int, help='Maximum time in seconds to wait for the reservation association after registry creation. Only used with --reservation.')
         c.argument('registry_name', completer=None, validator=None)
         c.argument('deployment_name', validator=None)
         c.argument('location', validator=get_default_location_from_resource_group)
         c.argument('workspace', is_preview=True,
                    help='Name or ID of the Log Analytics workspace to send registry diagnostic logs to. All events will be enabled. You can use "az monitor log-analytics workspace create" to create one. Extra billing may apply.')
+
+    from .reservation import REQUEST_RATE_TIERS, EGRESS_TIERS, INGRESS_TIERS
+    with self.argument_context('acr reservation') as c:
+        c.argument('reservation_name', options_list=['--name', '-n'], id_part='name', help='Name of the capacity reservation.', completer=None)
+        c.argument('registry_name', options_list=['--registry-name'], configured_default=None, validator=None, id_part=None, help='Name of an existing registry in the reservation subscription and resource group.')
+        c.argument('stamp_id', help='Identifier of the onboarded Dogfood stamp supplying capacity. Required for the POC; excluded from command output.')
+        c.argument('no_wait', action='store_true', help='Do not wait for the operation to complete.')
+
+    for scope in ['acr reservation create', 'acr reservation update']:
+        with self.argument_context(scope) as c:
+            extra = ['None'] if scope.endswith('update') else []
+            c.argument('request_rate_tier', arg_type=get_enum_type(list(REQUEST_RATE_TIERS) + extra), help='Request-rate tier. R1 reserves 1 RU; each tier doubles the capacity.')
+            c.argument('egress_tier', arg_type=get_enum_type(list(EGRESS_TIERS) + extra), help='Egress tier. E1 reserves 16 Gbps; each tier doubles the capacity.')
+            c.argument('ingress_tier', arg_type=get_enum_type(list(INGRESS_TIERS) + extra), help='Ingress tier. I1 reserves 0.5 Gbps; each tier doubles the capacity.')
+    with self.argument_context('acr reservation create') as c:
+        c.argument('location', validator=get_default_location_from_resource_group, required=False)
 
     with self.argument_context('acr check-name') as c:
         c.argument('registry_name', completer=None, validator=None)

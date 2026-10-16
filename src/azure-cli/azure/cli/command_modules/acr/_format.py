@@ -17,6 +17,17 @@ def registry_output_format(result):
     return _output_format(result, _registry_format_group)
 
 
+def reservation_output_format(result):
+    return _output_format(result, lambda item: OrderedDict([
+        ('NAME', _get_value(item, 'name')),
+        ('LOCATION', _get_value(item, 'location')),
+        ('REQUEST RATE TIER', _get_value(item, 'properties', 'requestRateTier')),
+        ('EGRESS TIER', _get_value(item, 'properties', 'egressTier')),
+        ('INGRESS TIER', _get_value(item, 'properties', 'ingressTier')),
+        ('STATE', _get_value(item, 'properties', 'provisioningState')),
+    ]))
+
+
 def usage_output_format(result):
     return _output_format(result, _usage_format_group)
 
@@ -187,7 +198,7 @@ def _output_format(result, format_group):
 
 
 def _registry_format_group(item):
-    return OrderedDict([
+    result = OrderedDict([
         ('NAME', _get_value(item, 'name')),
         ('RESOURCE GROUP', _get_value(item, 'resourceGroup')),
         ('LOCATION', _get_value(item, 'location')),
@@ -196,6 +207,9 @@ def _registry_format_group(item):
         ('CREATION DATE', _format_datetime(_get_value(item, 'creationDate'))),
         ('ADMIN ENABLED', _get_value(item, 'adminUserEnabled'))
     ])
+    if 'reservation' in item:
+        result['RESERVATION'] = (item['reservation'] or {}).get('name', '')
+    return result
 
 
 def _usage_format_group(item):

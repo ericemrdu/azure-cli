@@ -80,7 +80,9 @@ def acr_create(cmd,
                regional_endpoints=None,
                data_endpoint_enabled=None,
                endpoint_protocol=None,
-               writable_cache_repos=None):
+               writable_cache_repos=None,
+               reservation=None,
+               reservation_timeout=1800):
     if default_action and sku not in get_premium_sku(cmd):
         raise CLIError(NETWORK_RULE_NOT_SUPPORTED)
 
@@ -129,20 +131,33 @@ def acr_create(cmd,
     _handle_network_bypass(cmd, registry, allow_trusted_services)
     _handle_export_policy(cmd, registry, allow_exports)
 
+    reservation_info = None
+    if reservation is not None:
+        from .reservation import prepare_registry_reservation
+        reservation_info = prepare_registry_reservation(
+            cmd, reservation, resource_group_name, location, reservation_timeout)
+
     lro_poller = client.begin_create(resource_group_name, registry_name, registry)
 
-    if workspace:
+    if workspace or reservation_info is not None:
         from azure.mgmt.core.tools import is_valid_resource_id, resource_id
         from azure.cli.core.commands import LongRunningOperation
         from azure.cli.core.commands.client_factory import get_subscription_id
         acr = LongRunningOperation(cmd.cli_ctx)(lro_poller)
-        if not is_valid_resource_id(workspace):
-            workspace = resource_id(subscription=get_subscription_id(cmd.cli_ctx),
-                                    resource_group=resource_group_name,
-                                    namespace='microsoft.OperationalInsights',
-                                    type='workspaces',
-                                    name=workspace)
-        _create_diagnostic_settings(cmd.cli_ctx, acr, workspace)
+        if reservation_info is not None:
+            from .reservation import associate_created_registry
+            associated_acr = associate_created_registry(
+                cmd, acr, reservation_info, resource_group_name, registry_name, reservation_timeout)
+        if workspace:
+            if not is_valid_resource_id(workspace):
+                workspace = resource_id(subscription=get_subscription_id(cmd.cli_ctx),
+                                        resource_group=resource_group_name,
+                                        namespace='microsoft.OperationalInsights',
+                                        type='workspaces',
+                                        name=workspace)
+            _create_diagnostic_settings(cmd.cli_ctx, acr, workspace)
+        if reservation_info is not None:
+            return associated_acr
         return acr
 
     return lro_poller
@@ -155,8 +170,10 @@ def acr_delete(cmd, client, registry_name, resource_group_name=None, yes=False):
 
 
 def acr_show(cmd, client, registry_name, resource_group_name=None):
+    from .reservation import enrich_registry_reservation
     resource_group_name = get_resource_group_name_by_registry_name(cmd.cli_ctx, registry_name, resource_group_name)
-    return client.get(resource_group_name, registry_name)
+    registry = client.get(resource_group_name, registry_name)
+    return enrich_registry_reservation(cmd, registry, resource_group_name, registry_name)
 
 
 def acr_update_custom(cmd,

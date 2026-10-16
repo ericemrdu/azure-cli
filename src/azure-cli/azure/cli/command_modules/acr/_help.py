@@ -175,7 +175,13 @@ examples:
 helps['acr create'] = """
 type: command
 short-summary: Create an Azure Container Registry.
+long-summary: |
+  With --reservation, create the registry first, then associate it with an existing capacity reservation.
+  The reservation must be ready and in the same subscription, resource group and region.
+  If association fails or times out, the registry is preserved and the command reports the partial failure.
 examples:
+  - name: Create a registry and associate it with a ready Dogfood capacity reservation.
+    text: az acr create -n myregistry -g MyResourceGroup --sku Premium -l australiaeast --reservation MyReservation
   - name: Create a managed container registry with the Standard SKU.
     text: >
         az acr create -n myregistry -g MyResourceGroup --sku Standard
@@ -900,6 +906,10 @@ examples:
 helps['acr show'] = """
 type: command
 short-summary: Get the details of an Azure Container Registry.
+long-summary: |
+  In clouds named Dogfood or AzureDogfood, also look up the registry's capacity reservation within its resource group.
+  This requires permission to list reservations and their registry associations. If lookup fails, a warning is emitted
+  and the reservation field is omitted. A null reservation means the lookup succeeded and found no association.
 examples:
   - name: Get the login server for an Azure Container Registry.
     text: >
@@ -910,6 +920,121 @@ examples:
   - name: Check status of ABAC-based Repository Permission on a registry.
     text: >
         az acr show --name myregistry --resource-group MyResourceGroup --query roleAssignmentMode
+"""
+
+helps['acr reservation'] = """
+type: group
+short-summary: Manage preview capacity reservations through the POC ARM API.
+long-summary: |
+  Uses API version 2026-09-01-preview at the selected cloud's ARM endpoint. The POC is deployed in Dogfood.
+  Capacity reservations support named request-rate, egress and ingress tiers. Creation requires --stamp-id
+  and at least one tier. Stamp details are excluded from results. Ledger seeding is an operator prerequisite
+  and is not supported by these commands. The POC does not support migration of private-endpoint registries or replicas.
+"""
+
+helps['acr reservation create'] = """
+type: command
+short-summary: Reserve request-rate, egress or ingress capacity on an onboarded POC stamp.
+long-summary: |
+  Specify at least one tier; omitted dimensions reserve zero. The POC minimum commitment defaults to five minutes.
+  Operations wait for completion unless --no-wait is supplied. Tier capacity mappings are fixed POC values.
+examples:
+  - name: Reserve request-rate and egress capacity.
+    text: az acr reservation create -n MyReservation -g MyResourceGroup -l australiaeast --stamp-id dfaue-1 --request-rate-tier R4 --egress-tier E4
+  - name: Reserve ingress capacity without waiting.
+    text: az acr reservation create -n MyIngressReservation -g MyResourceGroup -l australiaeast --stamp-id dfaue-1 --ingress-tier I2 --no-wait
+"""
+
+helps['acr reservation show'] = """
+type: command
+short-summary: Show a capacity reservation without stamp internals.
+examples:
+  - name: Show a reservation.
+    text: az acr reservation show -n MyReservation -g MyResourceGroup
+  - name: Show its provisioning state.
+    text: az acr reservation show -n MyReservation -g MyResourceGroup --query properties.provisioningState
+"""
+
+helps['acr reservation list'] = """
+type: command
+short-summary: List capacity reservations in a resource group or subscription.
+examples:
+  - name: List reservations in a resource group.
+    text: az acr reservation list -g MyResourceGroup
+  - name: List reservations in the current subscription.
+    text: az acr reservation list
+"""
+
+helps['acr reservation update'] = """
+type: command
+short-summary: Resize a capacity reservation using named tiers.
+long-summary: |
+  Omitted dimensions retain their current capacity. Use None to remove a dimension; at least one dimension
+  must remain positive. Updates read current capacity before submitting all three amounts, so avoid concurrent
+  updates to the same reservation. The POC's provisioning state is trusted, including after a service-side rollback.
+examples:
+  - name: Increase egress while keeping other dimensions unchanged.
+    text: az acr reservation update -n MyReservation -g MyResourceGroup --egress-tier E8
+  - name: Remove ingress while retaining a request-rate reservation.
+    text: az acr reservation update -n MyReservation -g MyResourceGroup --request-rate-tier R4 --ingress-tier None
+"""
+
+helps['acr reservation delete'] = """
+type: command
+short-summary: Delete a reservation after its associations and minimum commitment have cleared.
+examples:
+  - name: Delete a reservation with confirmation.
+    text: az acr reservation delete -n MyReservation -g MyResourceGroup
+  - name: Delete without prompting.
+    text: az acr reservation delete -n MyReservation -g MyResourceGroup --yes
+"""
+
+helps['acr reservation associate'] = """
+type: command
+short-summary: Associate an existing registry with a capacity reservation.
+long-summary: |
+  The registry must be in the reservation's subscription and resource group. Waits until the association is Active,
+  displayed as Succeeded, unless --no-wait is supplied. Pending changes are displayed as Updating.
+  A timeout does not cancel the operation. The POC does not expose background migration failure details.
+examples:
+  - name: Associate and wait for completion.
+    text: az acr reservation associate -n MyReservation -g MyResourceGroup --registry-name myregistry
+  - name: Start association without waiting.
+    text: az acr reservation associate -n MyReservation -g MyResourceGroup --registry-name myregistry --no-wait
+"""
+
+helps['acr reservation disassociate'] = """
+type: command
+short-summary: Remove a registry from a capacity reservation.
+long-summary: |
+  Waits until this registry's association disappears unless --no-wait is supplied.
+  A timeout does not cancel the operation or delete the registry.
+examples:
+  - name: Disassociate and wait for completion.
+    text: az acr reservation disassociate -n MyReservation -g MyResourceGroup --registry-name myregistry
+  - name: Start disassociation without waiting.
+    text: az acr reservation disassociate -n MyReservation -g MyResourceGroup --registry-name myregistry --no-wait
+"""
+
+helps['acr reservation list-registries'] = """
+type: command
+short-summary: List registry associations with customer-facing states.
+examples:
+  - name: List associated registries.
+    text: az acr reservation list-registries -n MyReservation -g MyResourceGroup
+  - name: List registry names only.
+    text: az acr reservation list-registries -n MyReservation -g MyResourceGroup --query "[].registryId" -o tsv
+"""
+
+helps['acr reservation wait'] = """
+type: command
+short-summary: Wait for a capacity reservation to reach a provisioning state.
+long-summary: This waits for the reservation resource, not its registry associations.
+examples:
+  - name: Wait for successful provisioning.
+    text: az acr reservation wait -n MyReservation -g MyResourceGroup --created
+  - name: Wait for deletion.
+    text: az acr reservation wait -n MyReservation -g MyResourceGroup --deleted
 """
 
 helps['acr show-usage'] = """
