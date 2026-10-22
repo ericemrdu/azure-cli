@@ -21,9 +21,9 @@ def reservation_output_format(result):
     return _output_format(result, lambda item: OrderedDict([
         ('NAME', _get_value(item, 'name')),
         ('LOCATION', _get_value(item, 'location')),
-        ('REQUEST RATE TIER', _get_value(item, 'properties', 'requestRateTier')),
-        ('EGRESS TIER', _get_value(item, 'properties', 'egressTier')),
-        ('INGRESS TIER', _get_value(item, 'properties', 'ingressTier')),
+        ('REQUEST RATE TIER', _get_value(item, 'properties', 'requestRateTier').strip() or 'None'),
+        ('EGRESS TIER', _get_value(item, 'properties', 'egressTier').strip() or 'None'),
+        ('INGRESS TIER', _get_value(item, 'properties', 'ingressTier').strip() or 'None'),
         ('STATE', _get_value(item, 'properties', 'provisioningState')),
     ]))
 

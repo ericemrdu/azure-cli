@@ -7,6 +7,7 @@ import copy
 import io
 import json
 import unittest
+from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest import mock
 
@@ -188,6 +189,28 @@ class ReservationTests(unittest.TestCase):
         self.assertEqual(self.http.call_count, 1)
         self.sleep.assert_not_called()
 
+    def test_acr_reservation_empty_202_response(self):
+        for no_wait in (False, True):
+            with self.subTest(no_wait=no_wait):
+                self.http.reset_mock()
+                self.sleep.reset_mock()
+                self.http.side_effect = [
+                    response(status=202, headers={'Azure-AsyncOperation': MONITOR_URL}),
+                    response({'status': 'Succeeded'}),
+                    response(resource()),
+                ]
+                result = api.acr_reservation_create(
+                    self.cmd, RESERVATION, RESOURCE_GROUP, 'stamp', 'australiaeast',
+                    request_rate_tier='R1', no_wait=no_wait)
+                if no_wait:
+                    self.assertIsNone(result)
+                    self.assertEqual(self.http.call_count, 1)
+                    self.sleep.assert_not_called()
+                else:
+                    self.assertEqual(result['properties']['provisioningState'], 'Succeeded')
+                    self.assertEqual([call.args[2] for call in self.http.call_args_list],
+                                     [RESOURCE_URL, MONITOR_URL, RESOURCE_URL])
+
     def test_acr_reservation_polls_resource_without_monitor(self):
         self.http.side_effect = [response(resource('Provisioning'), 202), response(resource())]
         api.acr_reservation_create(
@@ -202,6 +225,19 @@ class ReservationTests(unittest.TestCase):
         with self.assertRaisesRegex(AzureResponseError, 'Requested capacity is unavailable'):
             api.acr_reservation_create(
                 self.cmd, RESERVATION, RESOURCE_GROUP, 'stamp', 'australiaeast', egress_tier='E4')
+
+    def test_acr_reservation_terminal_resource_failure_after_successful_monitor(self):
+        for state in ('Failed', 'Canceled', 'Cancelled'):
+            with self.subTest(state=state):
+                self.http.side_effect = [
+                    response(resource('Provisioning'), 202, {'Azure-AsyncOperation': MONITOR_URL}),
+                    response({'status': 'Succeeded'}),
+                    response(resource(state)),
+                ]
+                with self.assertRaisesRegex(AzureResponseError, state.lower()):
+                    api.acr_reservation_create(
+                        self.cmd, RESERVATION, RESOURCE_GROUP, 'stamp', 'australiaeast',
+                        request_rate_tier='R1')
 
     def test_acr_reservation_update_trusts_succeeded_after_rollback(self):
         rolled_back = resource()
@@ -339,6 +375,15 @@ class ReservationTests(unittest.TestCase):
         with self.assertRaisesRegex(AzureResponseError, 'may still be running'):
             api.acr_reservation_associate(self.cmd, RESERVATION, RESOURCE_GROUP, REGISTRY, timeout=1)
 
+    def test_acr_reservation_duplicate_associations_do_not_report_success(self):
+        self.http.side_effect = [
+            response(status=204),
+            response({'value': [association(), association(name=REGISTRY.upper())]}),
+        ]
+        with self.assertRaisesRegex(AzureResponseError, 'multiple associations'):
+            api.acr_reservation_associate(self.cmd, RESERVATION, RESOURCE_GROUP, REGISTRY)
+        self.sleep.assert_not_called()
+
     def test_acr_reservation_association_state_mapping(self):
         states = ['Migrating', 'Removing', 'Active', 'Unexpected']
         self.http.return_value = response({'value': [association(state) for state in states]})
@@ -426,6 +471,29 @@ class ReservationTests(unittest.TestCase):
         registry = {'name': REGISTRY, 'reservation': {'name': RESERVATION}}
         self.assertIn(RESERVATION, json.dumps(registry_output_format(registry)))
 
+    def test_acr_reservation_table_unset_tiers_display_none(self):
+        fields = (
+            ('requestRateTier', 'REQUEST RATE TIER'),
+            ('egressTier', 'EGRESS TIER'),
+            ('ingressTier', 'INGRESS TIER'),
+        )
+        for value in (None, '', ' ', 'None', 'CustomTier'):
+            for missing in (False, True):
+                with self.subTest(value=value, missing=missing):
+                    item = resource()
+                    for field, _ in fields:
+                        if missing:
+                            del item['properties'][field]
+                        else:
+                            item['properties'][field] = value
+                    original = copy.deepcopy(item)
+                    expected = 'CustomTier' if value == 'CustomTier' and not missing else 'None'
+                    for result in (item, [item], {'value': [item]}):
+                        formatted = reservation_output_format(result)[0]
+                        for _, heading in fields:
+                            self.assertEqual(formatted[heading], expected)
+                    self.assertEqual(item, original)
+
 
 class RegistryIntegrationTests(unittest.TestCase):
 
@@ -474,18 +542,70 @@ class RegistryIntegrationTests(unittest.TestCase):
 
 class ReservationCommandTests(unittest.TestCase):
 
-    def _invoke(self, arguments, responses, expected_exit=0):
+    def _invoke(self, arguments, responses, expected_exit=0, command_group=None):
         from azure.cli.core import get_default_cli
         output = io.StringIO()
         with mock.patch.object(api, 'get_subscription_id', return_value=SUBSCRIPTION), \
-                mock.patch.object(api, 'send_raw_request', side_effect=responses) as send:
+                mock.patch.object(api, 'send_raw_request', side_effect=responses) as send, \
+                mock.patch('azure.cli.core.util.check_connectivity', return_value=False), \
+                mock.patch('requests.sessions.Session.send',
+                           side_effect=AssertionError('Unexpected HTTP request')) as transport, \
+                redirect_stdout(output):
             cli = get_default_cli()
             try:
-                exit_code = cli.invoke(['acr', 'reservation'] + arguments + ['--only-show-errors'], out_file=output)
+                group = command_group if command_group is not None else ['acr', 'reservation']
+                exit_code = cli.invoke(group + arguments + ['--only-show-errors'], out_file=output)
             except SystemExit as ex:
                 exit_code = ex.code
+            transport.assert_not_called()
             self.assertEqual(exit_code, expected_exit)
             return output.getvalue(), send.call_args_list
+
+    def test_acr_reservation_cli_unset_tiers_only_normalized_in_table(self):
+        item = resource()
+        item['properties']['egressTier'] = None
+        del item['properties']['ingressTier']
+        item['properties']['reservedEgressGbps'] = 0
+        item['properties']['reservedIngressGbps'] = 0
+        for verb in ('show', 'list'):
+            with self.subTest(verb=verb):
+                arguments = [verb, '-g', RESOURCE_GROUP]
+                body = item
+                if verb == 'show':
+                    arguments += ['-n', RESERVATION]
+                else:
+                    body = {'value': [item]}
+                output, _ = self._invoke(arguments + ['-o', 'table'], [response(body)])
+                self.assertEqual(output.strip().splitlines()[-1].split(),
+                                 [RESERVATION, 'australiaeast', 'R4', 'None', 'None', 'Succeeded'])
+                output, _ = self._invoke(arguments + ['-o', 'json'], [response(body)])
+                result = json.loads(output)
+                if verb == 'list':
+                    result = result[0]
+                self.assertIsNone(result['properties']['egressTier'])
+                self.assertNotIn('ingressTier', result['properties'])
+                self.assertEqual(result['properties']['requestRateTier'], 'R4')
+
+    def test_acr_reservation_cli_help_loads_without_service_calls(self):
+        for verb in ('create', 'show', 'list', 'update', 'delete', 'associate',
+                     'disassociate', 'list-registries', 'wait'):
+            with self.subTest(verb=verb):
+                output, calls = self._invoke([verb, '--help'], [])
+                self.assertIn('az acr reservation ' + verb, output)
+                self.assertEqual(calls, [])
+
+    def test_acr_registry_cli_reservation_help_scope(self):
+        for verb in ('create', 'show', 'update'):
+            with self.subTest(verb=verb):
+                output, calls = self._invoke([verb, '--help'], [], command_group=['acr'])
+                if verb == 'create':
+                    self.assertIn('--reservation ', output)
+                    self.assertIn('--reservation-timeout', output)
+                elif verb == 'show':
+                    self.assertIn('reservation field is omitted', output)
+                else:
+                    self.assertNotIn('--reservation', output)
+                self.assertEqual(calls, [])
 
     def test_acr_reservation_cli_create_and_update_tiers(self):
         identity = ['-n', RESERVATION, '-g', RESOURCE_GROUP]
@@ -539,10 +659,17 @@ class ReservationCommandTests(unittest.TestCase):
                 ['create', '-n', RESERVATION, '-g', RESOURCE_GROUP, '--request-rate-tier', 'R4'],
                 ['create', '-n', RESERVATION, '-g', RESOURCE_GROUP, '--stamp-id', 'stamp',
                  '--request-rate-tier', '100'],
-                ['update', '-n', RESERVATION, '-g', RESOURCE_GROUP, '--request-rate-rus', '100']):
+                ['update', '-n', RESERVATION, '-g', RESOURCE_GROUP, '--request-rate-rus', '100'],
+                ['update', '-n', RESERVATION, '-g', RESOURCE_GROUP, '--set', 'properties.requestRateRus=100']):
             with self.subTest(arguments=arguments):
                 _output, calls = self._invoke(arguments, [], expected_exit=2)
                 self.assertEqual(calls, [])
+
+    def test_acr_registry_cli_update_rejects_reservation(self):
+        _output, calls = self._invoke(
+            ['update', '-n', REGISTRY, '-g', RESOURCE_GROUP, '--reservation', RESERVATION],
+            [], expected_exit=2, command_group=['acr'])
+        self.assertEqual(calls, [])
 
     def test_acr_reservation_cli_show_not_found_exits_three(self):
         self._invoke(['show', '-n', RESERVATION, '-g', RESOURCE_GROUP],
