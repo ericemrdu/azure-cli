@@ -36,7 +36,6 @@ _DIMENSIONS = (
 _ASSOCIATION_STATES = {'Migrating': 'Updating', 'Removing': 'Updating', 'Active': 'Succeeded'}
 _PUBLIC_PROPERTIES = (
     'requestRateTier', 'egressTier', 'ingressTier',
-    'reservedRequestRate', 'reservedEgressGbps', 'reservedIngressGbps',
     'provisioningState', 'statusReason', 'earliestDeletableAt', 'createdAt', 'lastModifiedAt',
 )
 
@@ -97,9 +96,9 @@ def _collection_path(cmd, resource_group_name=None):
 
 
 def _resource_path(cmd, reservation_name, resource_group_name):
-    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9-]{2,62}', reservation_name):
+    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9-]{0,62}', reservation_name):
         raise InvalidArgumentValueError(
-            'Reservation names must contain 3-63 letters, digits or hyphens and start with a letter or digit.')
+            'Reservation names must contain 1-63 letters, digits or hyphens and start with a letter or digit.')
     return _collection_path(cmd, resource_group_name) + '/' + reservation_name
 
 
@@ -238,7 +237,7 @@ def _tier_properties(request_rate_tier, egress_tier, ingress_tier, current=None)
             raise InvalidArgumentValueError(f'Invalid tier {selected!r}. Choose one of: {", ".join(tiers)}.')
         properties[label] = selected
     if not any(properties[amount] > 0 for _, amount, _, _ in _DIMENSIONS):
-        raise InvalidArgumentValueError('At least one reserved dimension must have a positive tier.')
+        raise InvalidArgumentValueError('At least one reserved dimension must have a specified tier.')
     return properties
 
 

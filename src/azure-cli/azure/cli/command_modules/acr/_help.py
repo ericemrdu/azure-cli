@@ -928,8 +928,10 @@ short-summary: Manage preview capacity reservations through the POC ARM API.
 long-summary: |
   Uses API version 2026-09-01-preview at the selected cloud's ARM endpoint. The POC is deployed in Dogfood.
   Capacity reservations support named request-rate, egress and ingress tiers. Creation requires --stamp-id
-  and at least one tier. Stamp details are excluded from results. Ledger seeding is an operator prerequisite
-  and is not supported by these commands. The POC does not support migration of private-endpoint registries or replicas.
+  and at least one tier. Results show named tiers rather than numeric reserved capacity; stamp details are excluded.
+  Reservation names must contain 1-63 letters, digits or hyphens and start with a letter or digit.
+  Ledger seeding is an operator prerequisite and is not supported by these commands.
+  The POC does not support migration of private-endpoint registries or replicas.
 """
 
 helps['acr reservation create'] = """

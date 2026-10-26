@@ -97,7 +97,7 @@ class ReservationTests(unittest.TestCase):
                     self.assertNotIn('internal', json.dumps(result))
         self.sleep.assert_not_called()
 
-    def test_acr_reservation_create_requires_positive_tier(self):
+    def test_acr_reservation_create_requires_specified_tier(self):
         for arguments in ({}, {'request_rate_tier': 'None'}, {'egress_tier': '64'},
                           {'request_rate_tier': 'R3'}):
             with self.subTest(arguments=arguments):
@@ -107,13 +107,23 @@ class ReservationTests(unittest.TestCase):
         self.http.assert_not_called()
 
     def test_acr_reservation_create_validates_name_stamp_and_timeout(self):
-        for name, stamp, timeout in (('a/b', 'stamp', 30), ('ab', 'stamp', 30),
+        for name, stamp, timeout in (('a/b', 'stamp', 30), ('', 'stamp', 30),
                                      (RESERVATION, ' ', 30), (RESERVATION, 'stamp', 0)):
             with self.subTest(name=name, stamp=stamp, timeout=timeout):
                 with self.assertRaises(InvalidArgumentValueError):
                     api.acr_reservation_create(
                         self.cmd, name, RESOURCE_GROUP, stamp, 'australiaeast',
                         request_rate_tier='R1', timeout=timeout)
+        self.http.assert_not_called()
+
+    def test_acr_reservation_name_length_boundaries(self):
+        for name in ('a', '1', 'ab', 'a-b', 'a' * 63):
+            with self.subTest(name=name):
+                self.assertEqual(api._resource_path(self.cmd, name, RESOURCE_GROUP), BASE_PATH + '/' + name)
+        for name in ('', 'a' * 64, '-a', 'a/b', 'a_b', 'a b'):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(InvalidArgumentValueError, '1-63'):
+                    api._resource_path(self.cmd, name, RESOURCE_GROUP)
         self.http.assert_not_called()
 
     def test_acr_reservation_update_preserves_omitted_amounts(self):
@@ -137,7 +147,7 @@ class ReservationTests(unittest.TestCase):
 
     def test_acr_reservation_update_rejects_all_zero(self):
         self.http.return_value = response(resource())
-        with self.assertRaises(InvalidArgumentValueError):
+        with self.assertRaisesRegex(InvalidArgumentValueError, 'must have a specified tier'):
             api.acr_reservation_update(self.cmd, RESERVATION, RESOURCE_GROUP,
                                        request_rate_tier='None', egress_tier='None', ingress_tier='None')
         self.assertEqual(self.http.call_count, 1)
@@ -248,7 +258,7 @@ class ReservationTests(unittest.TestCase):
         ]
         result = api.acr_reservation_update(self.cmd, RESERVATION, RESOURCE_GROUP, egress_tier='E8')
         self.assertEqual(result['properties']['provisioningState'], 'Succeeded')
-        self.assertEqual(result['properties']['reservedEgressGbps'], 64)
+        self.assertEqual(result['properties']['egressTier'], 'E4')
 
     def test_acr_reservation_poll_timeout(self):
         self._patch('time.monotonic', side_effect=[0, 0, 1])
@@ -305,6 +315,16 @@ class ReservationTests(unittest.TestCase):
         result = api.acr_reservation_show(self.cmd, RESERVATION, RESOURCE_GROUP)
         self.assertNotIn('internal', json.dumps(result))
         self.assertIn('capacity operation', result['properties']['statusReason'])
+
+    def test_acr_reservation_public_output_keeps_tiers_without_numeric_capacity(self):
+        item = resource()
+        original = copy.deepcopy(item)
+        result = api._public_reservation(item)
+        self.assertEqual(result['properties'], {
+            'requestRateTier': 'R4', 'egressTier': 'E4', 'ingressTier': 'I2',
+            'provisioningState': 'Succeeded', 'earliestDeletableAt': '2026-10-01T00:05:00Z',
+        })
+        self.assertEqual(item, original)
 
     def test_acr_reservation_delete_returns_no_output(self):
         self.http.return_value = response(status=204)

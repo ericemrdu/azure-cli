@@ -16,6 +16,10 @@ Command examples use `-n`, `-g`, and `--subscription`. Some were converted from
 `--ids` and have not been rerun; their recorded outputs retain the original
 ignored-subscription warnings.
 
+Output contract update: reservation results now expose tier fields without
+`reservedRequestRate`, `reservedEgressGbps`, or `reservedIngressGbps`. The
+recorded outputs below predate this change and remain unchanged.
+
 Each check includes its command, recorded output, exit code, and result.
 Where both streams contain output, stderr precedes stdout. `(no output)`
 denotes empty streams. Expected rejections count as passed validation checks,
@@ -127,7 +131,7 @@ Exit code: **0**
 
 Result: **PASS**. Internal stamp properties are absent from the public output.
 
-## 4. Reject reservation creation without a positive tier
+## 4. Reject reservation creation without a specified tier
 
 Input:
 
@@ -146,7 +150,10 @@ Exit code: **1**
 
 Result: **PASS**.
 
-## 5. Reject a reservation name shorter than three characters
+## 5. Historical rejection of a two-character reservation name
+
+The CLI now accepts reservation names of 1-63 characters. This recorded
+rejection predates that change and does not validate the current length limit.
 
 Input:
 
